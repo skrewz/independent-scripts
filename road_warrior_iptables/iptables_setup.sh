@@ -82,7 +82,9 @@ function set_up_ingress_restrictions()
 
 cleanup_and_safety_disable
 
-set_up_user_based_traffic_rejection
+if [ "$#" -lt 1 ] || [ "--disable" != "$1" ]; then
+  set_up_user_based_traffic_rejection
+fi
 
 set_up_ingress_restrictions
 
