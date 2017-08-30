@@ -21,11 +21,13 @@ function ipt ()
   # simple redirect shorthand:
   /sbin/iptables "$@"
 } # }}}
-
 function remove_temporary_safety_disable ()
 { # {{{
   # re-enable traffic after setting up specific rules:
   ipt -P OUTPUT ACCEPT
+  # Certain kinds of traffic will be disallowed, but outbound-to-loopback will
+  # always be considered okay:
+  ipt -I OUTPUT -o lo -j ACCEPT
 
   ipt -A INPUT -i lo -j ACCEPT
   ipt -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
@@ -49,9 +51,6 @@ function cleanup_and_safety_disable ()
     ipt -X "$chain" &>/dev/null || true
   done
 } # }}}
-
-
-
 function set_up_user_based_traffic_rejection()
 { # {{{
   # clear anything that might be set up:
