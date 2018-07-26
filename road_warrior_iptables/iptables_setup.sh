@@ -44,6 +44,7 @@ function cleanup_and_safety_disable ()
   ipt -F INPUT
 
   for user in "${users[@]}"; do
+    id "$user" >&/dev/null || continue
     chain="output-for-$user"
 
     # squelched; may not exist
@@ -56,6 +57,7 @@ function set_up_user_based_traffic_rejection()
   # clear anything that might be set up:
 
   for user in "${users[@]}"; do
+    id "$user" >&/dev/null || continue
     chain="output-for-$user"
 
     # route outbound traffic for $user to $chain:
