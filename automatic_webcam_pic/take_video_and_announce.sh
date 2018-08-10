@@ -10,6 +10,7 @@ delay_in_seconds="0"
 workdir="$(mktemp -d "/tmp/.$(basename "$0")_XXXXXXXX")"
 
 destfile_prefix="$permanent_storage_location/$(date  "+%Y/%m/%d/%H_%M_%S_@$(hostname -s)_%:::z")"
+lockfile="$HOME/.$(basename "$0")"
 
 function cleanup()
 {
@@ -81,6 +82,9 @@ while [ "0" != "$#" ]; do
     --capture-screenshot)
       capture_screenshot="set"
       ;;
+    --block)
+      block="set"
+      ;;
     --random-delay-up-to)
       delay_in_seconds="$((RANDOM%$2))"
       shift ;;
@@ -91,6 +95,20 @@ while [ "0" != "$#" ]; do
   shift
 done
 
+if [ -n "$block" ]; then
+  lockfile-create "$lockfile"
+  lockfile-touch "$lockfile" & lockfile_touch_pid="$!"
+  trap "kill $lockfile_touch_pid; lockfile-remove ${VERBOSEMODE:+--verbose} $lockfile" EXIT
+  for ((i=10;i>0;i--)); do
+    notify-send -t 60000  "Automatic webcam shots blocked" "$i min left"
+    sleep 60
+  done
+  notify-send -u critical -t 10000  "Automatic webcam shots unblocked"
+  exit $?
+fi
+
+
+
 if (( RANDOM%100 > probability_of_shot )); then
   cleanup
   exit 0
@@ -98,13 +116,17 @@ fi
 
 sleep $delay_in_seconds
 
+lockfile-create "$lockfile" || exit 0
+lockfile-touch "$lockfile" & lockfile_touch_pid="$!"
+trap "kill $lockfile_touch_pid; lockfile-remove ${VERBOSEMODE:+--verbose} $lockfile" EXIT
+
 if [ -n "$capture_screenshot" ]; then
-  capture_screenshot &
+  capture_screenshot & pid="$!"
 fi
 #announce_about_picture_about_to_be_taken
 snapshot_in="$(capture_video)"
 
-wait
+[ -z "$pid" ] || wait "$pid"
 
 if [ -n "$capture_screenshot" ]; then
   announce_about_just_taken_photo "Video'ed & screenshotted" "" "$snapshot_in"
