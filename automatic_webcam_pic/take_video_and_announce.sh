@@ -38,20 +38,18 @@ function capture_video()
 
   cd "$workdir"
 
-  # 20 frames of warmup, then video
-  mpv --quiet tv:// --tv-device=/dev/video0 --tv-width=1280 --tv-height=720 --ao null --frames $((23+20)) --vo image &>/dev/null
-  cp "00000033.jpg" "${destfile_prefix}${manual_infix}.jpg"
-  cp "00000033.jpg" "$latest_photo_destination"
+  # seek somewhat into stream; to get proper colour calibration etc on cam
+  ffmpeg -v 0 -f v4l2 -video_size 1280x720 -ss 2 -t 1 -i /dev/video0 video.avi
+  mpv --quiet --ao null --vo image video.avi &>/dev/null
 
-  rename 's/^0+//' *.jpg
-  ffmpeg -v 0 -start_number 20 -i %d.jpg -vcodec mpeg4 "${destfile_prefix}${manual_infix}.avi"
+  cp video.avi "${destfile_prefix}${manual_infix}.avi"
+  cp 00000006.jpg "${destfile_prefix}${manual_infix}.jpg"
 
-  #parallel convert {1} -colors 1 -format "%c" histogram:info: ::: {{3..9},{10..23}}.jpg >&2
 
-  cp "${destfile_prefix}${manual_infix}.avi" "$latest_video_destination"
+  cp video.avi "$latest_video_destination"
   echo "${destfile_prefix}${manual_infix}.jpg"
-  cd &> /dev/null
 
+  cd &> /dev/null
 } # }}}
 
 function announce_about_just_taken_photo()
@@ -79,7 +77,7 @@ while [ "0" != "$#" ]; do
       shift ;;
     --manual)
       manual_infix="_manual"
-      shift ;;
+      ;;
     --capture-screenshot)
       capture_screenshot="set"
       ;;
@@ -100,7 +98,9 @@ fi
 
 sleep $delay_in_seconds
 
-capture_screenshot &
+if [ -n "$capture_screenshot" ]; then
+  capture_screenshot &
+fi
 #announce_about_picture_about_to_be_taken
 snapshot_in="$(capture_video)"
 
