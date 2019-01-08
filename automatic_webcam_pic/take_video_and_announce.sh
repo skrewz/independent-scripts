@@ -1,16 +1,11 @@
 #!/bin/bash
 permanent_storage_location="$HOME/automatic_webcam_pics"
-latest_screenshot_destination="$HOME/automatic_webcam_pics/latest_screnshot.jpg"
-latest_photo_destination="$HOME/automatic_webcam_pics/latest_shot.jpg"
-latest_video_destination="$HOME/automatic_webcam_pics/latest_shot.avi"
 thumb_max_dimensions="320x180>"
 probability_of_shot="100"
 delay_in_seconds="0"
 
 workdir="$(mktemp -d "/tmp/.$(basename "$0")_XXXXXXXX")"
 
-destfile_prefix="$permanent_storage_location/$(date  "+%Y/%m/%d/%H_%M_%S_@$(hostname -s)_%:::z")"
-lockfile="$HOME/.$(basename "$0")"
 
 function cleanup()
 {
@@ -24,18 +19,33 @@ function update_symlinks()
   ln -Tfs "$(date  -d "yesterday" "+%Y/%m/%d")" "$permanent_storage_location/yesterday"
 }
 
+function capture_ps_faux()
+{ # {{{
+  mkdir -p "$destfile_prefix"
+  cd "$workdir"
+  ps faux > "${destfile_prefix}/ps_faux"
+
+} # }}}
 function capture_screenshot()
 { # {{{
-  mkdir -p "$(dirname "$destfile_prefix")"
+  mkdir -p "$destfile_prefix"
   cd "$workdir"
   # Two-stage process, quick dump, longer conversion process
   import -window root screenshot.bmp
-  convert screenshot.bmp -quality 30 "${destfile_prefix}${manual_infix}_screenshot.jpg"
-  cp "${destfile_prefix}${manual_infix}_screenshot.jpg" "$latest_screenshot_destination"
+  convert screenshot.bmp -quality 50 "${destfile_prefix}/screenshot.jpg"
+
+} # }}}
+function do_ocr()
+{ # {{{
+  cd "$workdir"
+  for crop_parm in $(xrandr | sed -nre 's/^[^ ]+ connected (primary )?([0-9x+]+).*$/\2/;T;p'); do
+    convert -crop $crop_parm screenshot.bmp screenshot.png
+    tesseract screenshot.png ${destfile_prefix}/${crop_parm}.tesseract &>/dev/null
+  done
 } # }}}
 function capture_video()
 { # {{{
-  mkdir -p "$(dirname "$destfile_prefix")"
+  mkdir -p "$destfile_prefix"
 
   cd "$workdir"
 
@@ -43,12 +53,10 @@ function capture_video()
   ffmpeg -v 0 -f v4l2 -video_size 1280x720 -ss 2 -t 1 -i /dev/video0 video.avi
   mpv --quiet --ao null --vo image video.avi &>/dev/null
 
-  cp video.avi "${destfile_prefix}${manual_infix}.avi"
-  cp 00000006.jpg "${destfile_prefix}${manual_infix}.jpg"
+  cp video.avi "${destfile_prefix}/vid.avi"
+  cp 00000006.jpg "${destfile_prefix}/pic.jpg"
 
-
-  cp video.avi "$latest_video_destination"
-  echo "${destfile_prefix}${manual_infix}.jpg"
+  echo "${destfile_prefix}/pic.jpg"
 
   cd &> /dev/null
 } # }}}
@@ -95,6 +103,9 @@ while [ "0" != "$#" ]; do
   shift
 done
 
+destfile_prefix="$permanent_storage_location/$(date  "+%Y/%m/%d/%H_%M_%S_@$(hostname -s)_%:::z")${manual_infix}/"
+lockfile="$HOME/.$(basename "$0")"
+
 if [ -n "$block" ]; then
   lockfile-create "$lockfile"
   lockfile-touch "$lockfile" & lockfile_touch_pid="$!"
@@ -123,18 +134,23 @@ trap "kill $lockfile_touch_pid; lockfile-remove ${VERBOSEMODE:+--verbose} $lockf
 if [ -n "$capture_screenshot" ]; then
   capture_screenshot & pid="$!"
 fi
+capture_ps_faux
 #announce_about_picture_about_to_be_taken
 snapshot_in="$(capture_video)"
 
 [ -z "$pid" ] || wait "$pid"
 
 if [ -n "$capture_screenshot" ]; then
-  announce_about_just_taken_photo "Video'ed & screenshotted" "" "$snapshot_in"
+  announce_about_just_taken_photo "Video'ed & screenshotted" "Should a ps faux output also be captured?" "$snapshot_in"
 else
   announce_about_just_taken_photo "Video'ed" "" "$snapshot_in"
 fi
 
 update_symlinks
+if [ -n "$capture_screenshot" ]; then
+  wait "$pid"
+  do_ocr
+fi
 cleanup
 
 # vim: fml=1 fdm=marker
