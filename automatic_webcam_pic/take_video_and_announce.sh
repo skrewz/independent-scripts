@@ -127,7 +127,7 @@ fi
 
 sleep $delay_in_seconds
 
-lockfile-create "$lockfile" || exit 0
+lockfile-create -q "$lockfile" || exit 0
 lockfile-touch "$lockfile" & lockfile_touch_pid="$!"
 trap "kill $lockfile_touch_pid; lockfile-remove ${VERBOSEMODE:+--verbose} $lockfile" EXIT
 
