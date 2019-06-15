@@ -51,7 +51,7 @@ function capture_video()
 
   # seek somewhat into stream; to get proper colour calibration etc on cam
   ffmpeg -v 0 -f v4l2 -video_size 1280x720 -ss 2 -t 1 -i /dev/video0 video.avi
-  mpv --quiet --ao null --vo image video.avi &>/dev/null
+  mpv --no-config --quiet --ao null --vo image video.avi &>/dev/null
 
   cp video.avi "${destfile_prefix}/vid.avi"
   cp 00000006.jpg "${destfile_prefix}/pic.jpg"
@@ -60,6 +60,17 @@ function capture_video()
 
   cd &> /dev/null
 } # }}}
+
+function is_mpv_fullscreen()
+{
+  if [ -S ~/.config/mpv/socket ]; then
+    local value="$(echo '{"command": ["get_property", "fullscreen"]}' | socat - ~/.config/mpv/socket 2>/dev/null || true)"
+    if [ "$value" = '{"data":true,"error":"success"}' ]; then
+      return 0
+    fi
+  fi
+  return 1
+}
 
 function announce_about_just_taken_photo()
 { # {{{
@@ -71,7 +82,10 @@ function announce_about_just_taken_photo()
   # flop to mirror it for reverse display (which seems more natural, after all?)
   convert -flop -resize "$thumb_max_dimensions" "$photo_path"  "$workdir/thumbnail.jpg"
 
-  notify-send -t 4000 -i "$workdir/thumbnail.jpg" "$summary" "$body"
+  # Movie mode: don't display if mpv is fullscreen
+  if ! is_mpv_fullscreen; then
+    notify-send -t 4000 -i "$workdir/thumbnail.jpg" "$summary" "$body"
+  fi
   #notify-send -t 4000 "$summary" "$body"
   rm -Rf "$workdir"
 } # }}}
