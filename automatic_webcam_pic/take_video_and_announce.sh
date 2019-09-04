@@ -3,6 +3,7 @@ permanent_storage_location="$HOME/automatic_webcam_pics"
 thumb_max_dimensions="320x180>"
 probability_of_shot="100"
 delay_in_seconds="0"
+video_device="/dev/video0"
 
 workdir="$(mktemp -d "/tmp/.$(basename "$0")_XXXXXXXX")"
 
@@ -50,7 +51,7 @@ function capture_video()
   cd "$workdir"
 
   # seek somewhat into stream; to get proper colour calibration etc on cam
-  ffmpeg -v 0 -f v4l2 -video_size 1280x720 -ss 2 -t 1 -i /dev/video0 video.avi
+  ffmpeg -v 0 -f v4l2 -video_size 1280x720 -ss 2 -t 1 -i $video_device video.avi
   mpv --no-config --quiet --ao null --vo image video.avi &>/dev/null
 
   cp video.avi "${destfile_prefix}/vid.avi"
@@ -89,6 +90,11 @@ function announce_about_just_taken_photo()
   #notify-send -t 4000 "$summary" "$body"
   rm -Rf "$workdir"
 } # }}}
+
+
+if [ -e "$HOME/.$(basename "$0" .sh).rc" ]; then
+  source "$HOME/.$(basename "$0" .sh).rc"
+fi
 
 
 
