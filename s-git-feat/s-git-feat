@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+# This is a quality-of-life script surrounding the quick spin-up of a worktree
+# off of a thought. I.e. you'd invoke `s-git-feat` with a desire to do something; this script then:
+# - Figures out a branch/worktree name for that thing.
+# - Figures out which repository you would have been referring to. Pays to be clear, though.
+# - Sets up a worktree, jumps into it, spins up opencode and shoots off the
+#   initial prompt (presumed to be "Plan" mode.)
+# - Starts several kitty terminal windows to go with it.
+
+set -euo pipefail
+
+DEBUG=false
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --debug)
+            DEBUG=true
+            set -x
+            shift
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+# --- Config ---
+MODEL="${S_GIT_FEAT_MODEL:-qw3.5-2b-nonthinking-Q5_K_S-midperf-ctx40k}"
+LLM_ENDPOINT="${S_GIT_FEAT_ENDPOINT:-http://localhost:8080/v1/chat/completions}"
+REPOS_UNDER="${S_GIT_FEAT_REPODIR:-$HOME/repos}"
+WORKTREES_UNDER="${S_GIT_FEAT_WORKTREE_DIR:-$HOME/worktrees}"
+
+# --- Helper: call AI endpoint ---
+ai_query() {
+    local user_msg="$1"
+    local response
+    response=$(curl -s -X POST "$LLM_ENDPOINT" \
+        -H "Content-Type: application/json" \
+        -d "{\"model\": \"$MODEL\", \"messages\": [{\"role\": \"user\", \"content\": \"$user_msg\"}], \"max_tokens\": 6000, \"temperature\": 0.3}")
+    
+    if $DEBUG; then
+        echo "📡 AI request: $user_msg" >&2
+        echo "📥 AI response (raw): $response" >&2
+    fi
+    
+    echo "$response" | jq -r '.choices[0].message.content'
+}
+
+# --- 1. Parse prompt ---
+PROMPT="$*"
+if [ -z "$PROMPT" ]; then
+    echo "❌ No prompt provided"
+    echo "   Usage: s-git-feat <your feature description>"
+    echo ""
+    echo "   Example: s-git-feat 'Add dark mode toggle to settings'"
+    exit 1
+fi
+
+echo "🚀 s-git-feat starting..."
+echo "   Prompt: $PROMPT"
+echo ""
+
+# --- 2. List all repos ---
+REPOS=$(find "$REPOS_UNDER" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort -u | tr '\n' ',')
+echo "📂 Found $(echo "$REPOS" | tr ',' '\n' | wc -l) repos in $REPOS_UNDER"
+
+# --- 3. Generate worktree name (AI) ---
+echo "🤖 Asking AI to generate worktree name..."
+NAME=$(ai_query "Output ONLY a short, lowercase, hyphenated branch name for this feature: $PROMPT")
+echo "   AI suggested: $NAME"
+
+# --- 4. Validate name format ---
+if ! echo "$NAME" | grep -qE '^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$'; then
+    echo "❌ Generated name '$NAME' is not properly formatted (expected: lowercase, hyphenated)" >&2
+    exit 1
+fi
+
+# --- 5. Create worktree dir ---
+DATE=$(date +%Y-%m-%d_%H_%M_%S)
+WORKTREE_DIR="$WORKTREES_UNDER/${DATE}_${NAME}"
+mkdir -p "$WORKTREE_DIR"
+echo "📁 Created worktree: $WORKTREE_DIR"
+
+# --- 6. Select repo (AI) ---
+echo "🤖 Asking AI which repo to use..."
+SELECTED_REPO=$(ai_query "Output ONLY the repo name from this list: $REPOS. Which repo for: $PROMPT")
+SELECTED_REPO=$(echo "$SELECTED_REPO" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
+echo "   AI selected: $SELECTED_REPO"
+REPO_PATH="$REPOS_UNDER/$SELECTED_REPO"
+if [ ! -d "$REPO_PATH" ]; then
+    echo "❌ Repo '$SELECTED_REPO' not found at $REPO_PATH" >&2
+    exit 1
+fi
+echo "✅ Repo confirmed: $REPO_PATH"
+
+# --- 7. Detect branch ---
+cd "$REPO_PATH"
+BRANCH=$(git branch --show-current 2>/dev/null || echo "main")
+if [ "$BRANCH" != "main" ] && [ "$BRANCH" != "master" ]; then
+    echo "❌ Unknown branch '$BRANCH' (expected 'main' or 'master')" >&2
+    exit 1
+fi
+echo "🌿 Detected branch: $BRANCH"
+
+# --- 8. Create git worktree ---
+echo "📦 Creating git worktree..."
+git worktree add -b "$NAME" "$WORKTREE_DIR" "$BRANCH"
+echo "✅ Worktree created: $WORKTREE_DIR"
+
+# --- 9. Generate random port ---
+PORT=$((RANDOM % 10000 + 30000))
+echo "🔌 Generated random port: $PORT"
+
+# --- 10. Start opencode server (cd to worktree first) ---
+echo "🚀 Starting opencode server..."
+cd "$WORKTREE_DIR"
+opencode serve --port "$PORT" --hostname 127.0.0.1 &
+OPENCODE_PID=$!
+echo "   Server started (PID: $OPENCODE_PID)"
+sleep 2
+echo "✅ Opencode server ready: http://127.0.0.1:$PORT"
+
+# --- 11. Create session and send prompt ---
+echo "💬 Creating session and sending prompt..."
+SESSION_ID=$(curl -s -X POST "http://127.0.0.1:$PORT/session" \
+  -H "Content-Type: application/json" \
+  -d '{"title": "'"$NAME"'"}' | jq -r '.id')
+echo "   Session ID: $SESSION_ID"
+
+[ -n "$SESSION_ID" ] || { echo "No session ID?"; exit 1; }
+
+curl -s -X POST "http://127.0.0.1:$PORT/session/$SESSION_ID/prompt_async" \
+  -H "Content-Type: application/json" \
+  -d "{\"parts\": [{\"type\": \"text\", \"text\": \"$PROMPT\"}]}"
+echo "✅ Prompt sent to session"
+
+# --- 12. Launch 3 kitty terminals ---
+echo "🖥️  Launching terminals..."
+kitty --class s-git-feat-nvim --directory "$WORKTREE_DIR" nvim &
+echo "   ✓ nvim terminal (s-git-feat-nvim)"
+kitty --class s-git-feat-opencode --directory "$WORKTREE_DIR" opencode attach "http://127.0.0.1:$PORT" --session "$SESSION_ID" &
+echo "   ✓ opencode TUI terminal (s-git-feat-opencode)"
+kitty --class s-git-feat-shell --directory "$WORKTREE_DIR" &
+echo "   ✓ empty shell terminal (s-git-feat-shell)"
+
+
+echo ""
+echo "═══════════════════════════════════════════════════════════"
+echo "🎉 Setup complete!"
+echo ""
+echo "   Worktree: $WORKTREE_DIR"
+echo "   Repo:     $REPO_PATH (branch: $BRANCH)"
+echo "   Opencode: http://127.0.0.1:$PORT (PID: $OPENCODE_PID)"
+echo "   Session:  $SESSION_ID"
+echo ""
+echo "   📝 Prompt: $PROMPT"
+echo ""
+echo "   Three terminals are now open:"
+echo "   • nvim - for editing code"
+echo "   • opencode - for AI assistance (Plan mode)"
+echo "   • shell - for running commands"
+echo "═══════════════════════════════════════════════════════════"
