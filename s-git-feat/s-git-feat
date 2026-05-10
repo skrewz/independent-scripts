@@ -158,7 +158,7 @@ echo "${GREY_STD}🌿 Detected branch: ${RESET}$BRANCH"
 
 # --- 8. Create git worktree ---
 echo "${GREY_STD}📦 Creating git worktree...${RESET}"
-git worktree add -b "$NAME" "$WORKTREE_DIR" "$BRANCH"
+git worktree add -b "$NAME" "$WORKTREE_DIR" "$BRANCH" >/dev/null 2>&1
 echo "${BOLD_BRIGHT_GREEN}✅ Worktree created: ${RESET}${GREY_LIGHT}$(fmt_path "$WORKTREE_DIR")${RESET}"
 
 # --- 9. Generate random port ---
