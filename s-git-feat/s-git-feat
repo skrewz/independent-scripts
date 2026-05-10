@@ -5,26 +5,23 @@
 # - Figures out which repository you would have been referred to. Pays to be clear, though.
 # - Sets up a worktree, jumps into it, spins up opencode and shoots off the
 #   initial prompt (presumed to be "Plan" mode.)
-# - Spawns 3 kitty windows with tmux sessions inside, then remote-controls them.
+# - Spawns 3 kitty windows, then remote-controls them via kitty's native remote control.
 
 set -euo pipefail
 
-# --- Cleanup trap: kill tmux sessions on error ---
+# --- Kitty remote control password ---
+KITTY_PW="$(sed -nre 's/^remote_control_password "([^"]+)"\s*$/\1/;T;p' ~/.config/kitty/kitty.credentials.conf)"
+
+# --- Cleanup trap: close kitty windows on error ---
 CLEANUP_DONE=false
 cleanup() {
     if $CLEANUP_DONE; then
         return
     fi
     CLEANUP_DONE=true
-    if [ -n "${NVIM_SESSION:-}" ] && tmux has-session -t "$NVIM_SESSION" 2>/dev/null; then
-        tmux kill-session -t "$NVIM_SESSION" 2>/dev/null || true
-    fi
-    if [ -n "${OPENCODE_SESSION:-}" ] && tmux has-session -t "$OPENCODE_SESSION" 2>/dev/null; then
-        tmux kill-session -t "$OPENCODE_SESSION" 2>/dev/null || true
-    fi
-    if [ -n "${SHELL_SESSION:-}" ] && tmux has-session -t "$SHELL_SESSION" 2>/dev/null; then
-        tmux kill-session -t "$SHELL_SESSION" 2>/dev/null || true
-    fi
+    kitten @ --password "$KITTY_PW" close-window --match "env:S_GIT_FEAT_ID=$NVIM_SESSION" 2>/dev/null || true
+    kitten @ --password "$KITTY_PW" close-window --match "env:S_GIT_FEAT_ID=$OPENCODE_SESSION" 2>/dev/null || true
+    kitten @ --password "$KITTY_PW" close-window --match "env:S_GIT_FEAT_ID=$SHELL_SESSION" 2>/dev/null || true
 }
 
 # Untrap on success (if we don't make it to the end)
@@ -59,25 +56,21 @@ LLM_ENDPOINT="${S_GIT_FEAT_ENDPOINT:-http://localhost:8080/v1/chat/completions}"
 REPOS_UNDER="${S_GIT_FEAT_REPODIR:-$HOME/repos}"
 WORKTREES_UNDER="${S_GIT_FEAT_WORKTREE_DIR:-$HOME/worktrees}"
 
-# --- 0. Spawn tmux sessions early (before any AI calls) ---
+# --- 0. Spawn kitty windows early (before any AI calls) ---
 RANDOM_SUFFIX=$RANDOM
 NVIM_SESSION="s-git-feat-${RANDOM_SUFFIX}-nvim"
 OPENCODE_SESSION="s-git-feat-${RANDOM_SUFFIX}-opencode"
 SHELL_SESSION="s-git-feat-${RANDOM_SUFFIX}-shell"
 
-echo "${GREY_STD}🖥️  Spawning tmux sessions...${RESET}"
-tmux new-session -d -s "$NVIM_SESSION" "$SHELL"
-tmux new-session -d -s "$OPENCODE_SESSION" "$SHELL"
-tmux new-session -d -s "$SHELL_SESSION" "$SHELL"
 
-# Attach each session to a kitty window (attached mode)
-kitty tmux attach-session -t "$NVIM_SESSION" &
-kitty tmux attach-session -t "$OPENCODE_SESSION" &
-kitty tmux attach-session -t "$SHELL_SESSION" &
+echo "${GREY_STD}🖥️  Spawning kitty windows...${RESET}"
+kitten @ --password "$KITTY_PW" launch --type os-window --env "S_GIT_FEAT_ID=$NVIM_SESSION" "$SHELL" &>/dev/null &
+kitten @ --password "$KITTY_PW" launch --type os-window --env "OPENCODE_SERVER_PASSWORD=$OPENCODE_SERVER_PASSWORD" --env "S_GIT_FEAT_ID=$OPENCODE_SESSION" "$SHELL" &>/dev/null &
+kitten @ --password "$KITTY_PW" launch --type os-window --env "S_GIT_FEAT_ID=$SHELL_SESSION" "$SHELL"  &>/dev/null &
 
-echo "${GREY_STD}   ✓ tmux session: ${RESET}${GREY_LIGHT}$NVIM_SESSION${RESET}"
-echo "${GREY_STD}   ✓ tmux session: ${RESET}${GREY_LIGHT}$OPENCODE_SESSION${RESET}"
-echo "${GREY_STD}   ✓ tmux session: ${RESET}${GREY_LIGHT}$SHELL_SESSION${RESET}"
+echo "${GREY_STD}   ✓ kitty window: ${RESET}${GREY_LIGHT}$NVIM_SESSION${RESET}"
+echo "${GREY_STD}   ✓ kitty window: ${RESET}${GREY_LIGHT}$OPENCODE_SESSION${RESET}"
+echo "${GREY_STD}   ✓ kitty window: ${RESET}${GREY_LIGHT}$SHELL_SESSION${RESET}"
 echo ""
 
 # --- Helper: call AI endpoint ---
@@ -185,21 +178,26 @@ curl -sS -X POST "http://127.0.0.1:$PORT/session/$SESSION_ID/prompt_async" \
   --data "$(jq -nc --arg prompt "$PROMPT" '{parts: [{type: "text", text: $prompt}]}')"
 echo "${BOLD_BRIGHT_GREEN}✅ Prompt sent to session${RESET}"
 
-# --- 12. Remote-control tmux sessions ---
-echo "${GREY_STD}🎮 Remote-controlling tmux sessions...${RESET}"
+# --- 12. Remote-control kitty windows ---
+echo "${GREY_STD}🎮 Remote-controlling kitty windows...${RESET}"
 
-# Send cd + nvim to nvim session
-tmux send-keys -t "$NVIM_SESSION" "cd $WORKTREE_DIR" C-m
-tmux send-keys -t "$NVIM_SESSION" "nvim" C-m
+# Send cd + nvim to nvim window
+kitten @ --password "$KITTY_PW" send-text --match "env:S_GIT_FEAT_ID=$NVIM_SESSION" --bracketed-paste enable "cd $WORKTREE_DIR"
+kitten @ --password "$KITTY_PW" send-key --match "env:S_GIT_FEAT_ID=$NVIM_SESSION" Return
+kitten @ --password "$KITTY_PW" send-text --match "env:S_GIT_FEAT_ID=$NVIM_SESSION" --bracketed-paste enable "nvim"
+kitten @ --password "$KITTY_PW" send-key --match "env:S_GIT_FEAT_ID=$NVIM_SESSION" Return
 echo "${GREY_STD}   ✓ Sent to ${RESET}${GREY_LIGHT}$NVIM_SESSION${GREY_STD}: cd $WORKTREE_DIR && nvim${RESET}"
 
-# Send cd + opencode attach to opencode session
-tmux send-keys -t "$OPENCODE_SESSION" "cd $WORKTREE_DIR" C-m
-tmux send-keys -t "$OPENCODE_SESSION" "opencode attach \"http://127.0.0.1:$PORT\" --session \"$SESSION_ID\"" C-m
+# Send cd + opencode attach to opencode window
+kitten @ --password "$KITTY_PW" send-text --match "env:S_GIT_FEAT_ID=$OPENCODE_SESSION" --bracketed-paste enable "cd $WORKTREE_DIR"
+kitten @ --password "$KITTY_PW" send-key --match "env:S_GIT_FEAT_ID=$OPENCODE_SESSION" Return
+kitten @ --password "$KITTY_PW" send-text --match "env:S_GIT_FEAT_ID=$OPENCODE_SESSION" --bracketed-paste enable "opencode attach \"http://127.0.0.1:$PORT\" --session \"$SESSION_ID\""
+kitten @ --password "$KITTY_PW" send-key --match "env:S_GIT_FEAT_ID=$OPENCODE_SESSION" Return
 echo "${GREY_STD}   ✓ Sent to ${RESET}${GREY_LIGHT}$OPENCODE_SESSION${GREY_STD}: cd $WORKTREE_DIR && opencode attach...${RESET}"
 
-# Send cd to shell session
-tmux send-keys -t "$SHELL_SESSION" "cd $WORKTREE_DIR" C-m
+# Send cd to shell window
+kitten @ --password "$KITTY_PW" send-text --match "env:S_GIT_FEAT_ID=$SHELL_SESSION" --bracketed-paste enable "cd $WORKTREE_DIR"
+kitten @ --password "$KITTY_PW" send-key --match "env:S_GIT_FEAT_ID=$SHELL_SESSION" Return
 echo "${GREY_STD}   ✓ Sent to ${RESET}${GREY_LIGHT}$SHELL_SESSION${GREY_STD}: cd $WORKTREE_DIR${RESET}"
 
 trap - EXIT
@@ -215,7 +213,7 @@ echo "${GREY_STD}   Session:  ${RESET}${BOLD_BRIGHT_YELLOW}$SESSION_ID${RESET}"
 echo ""
 echo "${GREY_STD}   📝 Prompt: ${RESET}$PROMPT"
 echo ""
-echo "${GREY_STD}   Three tmux sessions are now active in kitty windows:${RESET}"
+echo "${GREY_STD}   Three kitty windows are now active:${RESET}"
 echo "${GREY_STD}   • ${RESET}${GREY_LIGHT}$NVIM_SESSION${GREY_STD} - nvim${RESET}"
 echo "${GREY_STD}   • ${RESET}${GREY_LIGHT}$OPENCODE_SESSION${GREY_STD} - opencode TUI${RESET}"
 echo "${GREY_STD}   • ${RESET}${GREY_LIGHT}$SHELL_SESSION${GREY_STD} - shell${RESET}"
