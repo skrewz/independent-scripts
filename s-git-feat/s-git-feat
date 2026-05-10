@@ -118,6 +118,9 @@ echo "${GREY_STD}📂 Found $(echo "$REPOS" | tr ',' '\n' | wc -l) repos in ${GR
 # --- 3. Select repo (AI) ---
 echo "${GREY_STD}🤖 Asking AI which repo to use...${RESET}"
 SELECTED_REPO=$(ai_query "Output ONLY the repo name (no prefixes, no reasoning) from this list: $REPOS. Which repo is the user referring to in this prompt? \"$PROMPT\". If the user is specifying a repo, use that. If you're in doubt, do not output anything.")
+
+[ -n "$SELECTED_REPO" ]
+
 SELECTED_REPO=$(echo "$SELECTED_REPO" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
 echo "${GREY_STD}   AI selected: ${RESET}${BOLD_BRIGHT_YELLOW}$SELECTED_REPO${RESET}"
 REPO_PATH="$REPOS_UNDER/$SELECTED_REPO"
