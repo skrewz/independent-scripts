@@ -173,7 +173,7 @@ echo "${GREY_STD}🔌 Generated random port: ${RESET}$PORT"
 # --- 10. Start opencode server (cd to worktree first) ---
 echo "${GREY_STD}🚀 Starting opencode server...${RESET}"
 cd "$WORKTREE_DIR"
-opencode serve --port "$PORT" --hostname 127.0.0.1 &
+opencode serve --port "$PORT" --hostname 127.0.0.1 &>/dev/null &
 OPENCODE_PID=$!
 echo "${GREY_STD}   Server started (PID: ${RESET}$OPENCODE_PID${GREY_STD})${RESET}"
 sleep 5
