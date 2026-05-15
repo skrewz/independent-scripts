@@ -20,7 +20,7 @@ cleanup() {
     fi
     CLEANUP_DONE=true
     kitten @ --password "$KITTY_PW" close-window --match "env:S_GIT_FEAT_ID=$NVIM_SESSION" 2>/dev/null || true
-    kitten @ --password "$KITTY_PW" close-window --match "env:S_GIT_FEAT_ID=$OPENCODE_SESSION" 2>/dev/null || true
+    kitten @ --password "$KITTY_PW" close-window --match "env:S_GIT_FEAT_ID=$AGENT_SESSION" 2>/dev/null || true
     kitten @ --password "$KITTY_PW" close-window --match "env:S_GIT_FEAT_ID=$SHELL_SESSION" 2>/dev/null || true
 }
 
@@ -38,6 +38,7 @@ BOLD_BRIGHT_YELLOW=$'\033[1;38;5;226m'
 
 DEBUG=false
 MODE="build"
+AGENT="opencode"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --debug)
@@ -49,11 +50,20 @@ while [[ $# -gt 0 ]]; do
             MODE="plan"
             shift
             ;;
+        --pi)
+            AGENT="pi"
+            shift
+            ;;
         *)
             break
             ;;
     esac
 done
+
+if [ "$AGENT" = "pi" ] && [ "$MODE" = "plan" ]; then
+    echo "${BOLD_BRIGHT_RED}❌ --plan and --pi are incompatible${RESET}" >&2
+    exit 1
+fi
 
 # --- Config ---
 MODEL="${S_GIT_FEAT_MODEL:-qw3.5-2b-nonthinking-Q5_K_S-default-ctx256k}"
@@ -69,7 +79,7 @@ fmt_path() {
 # --- 0. Spawn kitty windows early (before any AI calls) ---
 RANDOM_SUFFIX=$RANDOM
 NVIM_SESSION="s-git-feat-${RANDOM_SUFFIX}-nvim"
-OPENCODE_SESSION="s-git-feat-${RANDOM_SUFFIX}-opencode"
+AGENT_SESSION="s-git-feat-${RANDOM_SUFFIX}-agent"
 SHELL_SESSION="s-git-feat-${RANDOM_SUFFIX}-shell"
 
 OPENCODE_SERVER_PASSWORD="$(openssl rand -hex 16)"
@@ -77,11 +87,11 @@ export OPENCODE_SERVER_PASSWORD
 
 echo "${GREY_STD}🖥️  Spawning kitty windows...${RESET}"
 kitten @ --password "$KITTY_PW" launch --type os-window --env "S_GIT_FEAT_ID=$NVIM_SESSION" "$SHELL" &>/dev/null &
-kitten @ --password "$KITTY_PW" launch --type os-window --env "OPENCODE_SERVER_PASSWORD=$OPENCODE_SERVER_PASSWORD" --env "S_GIT_FEAT_ID=$OPENCODE_SESSION" "$SHELL" &>/dev/null &
+kitten @ --password "$KITTY_PW" launch --type os-window --env "OPENCODE_SERVER_PASSWORD=$OPENCODE_SERVER_PASSWORD" --env "S_GIT_FEAT_ID=$AGENT_SESSION" "$SHELL" &>/dev/null &
 kitten @ --password "$KITTY_PW" launch --type os-window --env "S_GIT_FEAT_ID=$SHELL_SESSION" "$SHELL"  &>/dev/null &
 
 echo "${GREY_STD}   ✓ kitty window: ${RESET}${GREY_LIGHT}$NVIM_SESSION${RESET}"
-echo "${GREY_STD}   ✓ kitty window: ${RESET}${GREY_LIGHT}$OPENCODE_SESSION${RESET}"
+echo "${GREY_STD}   ✓ kitty window: ${RESET}${GREY_LIGHT}$AGENT_SESSION${RESET}"
 echo "${GREY_STD}   ✓ kitty window: ${RESET}${GREY_LIGHT}$SHELL_SESSION${RESET}"
 echo ""
 
@@ -106,9 +116,10 @@ ai_query() {
 PROMPT="$*"
 if [ -z "$PROMPT" ]; then
     echo "${BOLD_BRIGHT_RED}❌ No prompt provided${RESET}"
-    echo "${GREY_STD}   Usage: s-git-feat [--plan] <your feature description>${RESET}"
+    echo "${GREY_STD}   Usage: s-git-feat [--plan] [--pi] <your feature description>${RESET}"
     echo ""
     echo "${GREY_STD}   Example: s-git-feat --plan 'Analyze the auth flow'${RESET}"
+    echo "${GREY_STD}   Example: s-git-feat --pi 'Add dark mode support'${RESET}"
     exit 1
 fi
 
@@ -166,38 +177,45 @@ echo "${GREY_STD}📦 Creating git worktree...${RESET}"
 git worktree add -b "$NAME" "$WORKTREE_DIR" "$BRANCH" >/dev/null 2>&1
 echo "${BOLD_BRIGHT_GREEN}✅ Worktree created: ${RESET}${GREY_LIGHT}$(fmt_path "$WORKTREE_DIR")${RESET}"
 
-# --- 9. Generate random port ---
-PORT=$((RANDOM % 10000 + 30000))
-echo "${GREY_STD}🔌 Generated random port: ${RESET}$PORT"
-
-# --- 10. Start opencode server (cd to worktree first) ---
-echo "${GREY_STD}🚀 Starting opencode server...${RESET}"
+# --- 9. Start agent (opencode or pi) ---
 cd "$WORKTREE_DIR"
-opencode serve --port "$PORT" --hostname 127.0.0.1 &>/dev/null &
-OPENCODE_PID=$!
-echo "${GREY_STD}   Server started (PID: ${RESET}$OPENCODE_PID${GREY_STD})${RESET}"
-sleep 5
-echo "${BOLD_BRIGHT_GREEN}✅ Opencode server ready: ${RESET}${GREY_LIGHT}http://127.0.0.1:$PORT${RESET}"
 
-# --- 11. Create session and send prompt ---
-echo "${GREY_STD}💬 Creating session and sending prompt...${RESET}"
-SESSION_ID=$(curl -u "opencode:$OPENCODE_SERVER_PASSWORD" -sS -X POST "http://127.0.0.1:$PORT/session" \
-  -H "Content-Type: application/json" \
-  --data "$(jq -nc --arg title "$NAME" '{title: $title}')" | jq -r '.id')
-echo "${GREY_STD}   Session ID: ${RESET}${BOLD_BRIGHT_YELLOW}$SESSION_ID${RESET}"
+if [ "$AGENT" = "opencode" ]; then
+    # --- 9a. Generate random port ---
+    PORT=$((RANDOM % 10000 + 30000))
+    echo "${GREY_STD}🔌 Generated random port: ${RESET}$PORT"
 
-[ -n "$SESSION_ID" ] || { echo "No session ID?"; exit 1; }
+    # --- 9b. Start opencode server ---
+    echo "${GREY_STD}🚀 Starting opencode server...${RESET}"
+    opencode serve --port "$PORT" --hostname 127.0.0.1 &>/dev/null &
+    OPENCODE_PID=$!
+    echo "${GREY_STD}   Server started (PID: ${RESET}$OPENCODE_PID${GREY_STD})${RESET}"
+    sleep 5
+    echo "${BOLD_BRIGHT_GREEN}✅ Opencode server ready: ${RESET}${GREY_LIGHT}http://127.0.0.1:$PORT${RESET}"
 
-if [ -n "$MODE" ]; then
-    PROMPT_BODY="$(jq -nc --arg prompt "$PROMPT" --arg agent "$MODE" '{agent: $agent, parts: [{type: "text", text: $prompt}]}')"
-else
-    PROMPT_BODY="$(jq -nc --arg prompt "$PROMPT" '{parts: [{type: "text", text: $prompt}]}')"
+    # --- 9c. Create session and send prompt ---
+    echo "${GREY_STD}💬 Creating session and sending prompt...${RESET}"
+    SESSION_ID=$(curl -u "opencode:$OPENCODE_SERVER_PASSWORD" -sS -X POST "http://127.0.0.1:$PORT/session" \
+      -H "Content-Type: application/json" \
+      --data "$(jq -nc --arg title "$NAME" '{title: $title}')" | jq -r '.id')
+    echo "${GREY_STD}   Session ID: ${RESET}${BOLD_BRIGHT_YELLOW}$SESSION_ID${RESET}"
+
+    [ -n "$SESSION_ID" ] || { echo "No session ID?"; exit 1; }
+
+    if [ -n "$MODE" ]; then
+        PROMPT_BODY="$(jq -nc --arg prompt "$PROMPT" --arg agent "$MODE" '{agent: $agent, parts: [{type: "text", text: $prompt}]}')"
+    else
+        PROMPT_BODY="$(jq -nc --arg prompt "$PROMPT" '{parts: [{type: "text", text: $prompt}]}')"
+    fi
+
+    curl -u "opencode:$OPENCODE_SERVER_PASSWORD" -sS -X POST "http://127.0.0.1:$PORT/session/$SESSION_ID/prompt_async" \
+      -H "Content-Type: application/json" \
+      --data "$PROMPT_BODY"
+    echo "${BOLD_BRIGHT_GREEN}✅ Prompt sent to session${RESET}"
+elif [ "$AGENT" = "pi" ]; then
+    echo "${GREY_STD}🚀 Agent: ${RESET}${GREY_LIGHT}pi${RESET}"
+    echo "${GREY_STD}   (prompt will be injected into the TUI window)${RESET}"
 fi
-
-curl -u "opencode:$OPENCODE_SERVER_PASSWORD" -sS -X POST "http://127.0.0.1:$PORT/session/$SESSION_ID/prompt_async" \
-  -H "Content-Type: application/json" \
-  --data "$PROMPT_BODY"
-echo "${BOLD_BRIGHT_GREEN}✅ Prompt sent to session${RESET}"
 
 # --- 12. Remote-control kitty windows ---
 echo "${GREY_STD}🎮 Remote-controlling kitty windows...${RESET}"
@@ -209,12 +227,19 @@ kitten @ --password "$KITTY_PW" send-text --match "env:S_GIT_FEAT_ID=$NVIM_SESSI
 kitten @ --password "$KITTY_PW" send-key --match "env:S_GIT_FEAT_ID=$NVIM_SESSION" Return
 echo "${GREY_STD}   ✓ Sent to ${RESET}${GREY_LIGHT}$NVIM_SESSION${GREY_STD}: cd $WORKTREE_DIR && nvim${RESET}"
 
-# Send cd + opencode attach to opencode window
-kitten @ --password "$KITTY_PW" send-text --match "env:S_GIT_FEAT_ID=$OPENCODE_SESSION" --bracketed-paste enable "cd $WORKTREE_DIR"
-kitten @ --password "$KITTY_PW" send-key --match "env:S_GIT_FEAT_ID=$OPENCODE_SESSION" Return
-kitten @ --password "$KITTY_PW" send-text --match "env:S_GIT_FEAT_ID=$OPENCODE_SESSION" --bracketed-paste enable "opencode attach \"http://127.0.0.1:$PORT\" --session \"$SESSION_ID\""
-kitten @ --password "$KITTY_PW" send-key --match "env:S_GIT_FEAT_ID=$OPENCODE_SESSION" Return
-echo "${GREY_STD}   ✓ Sent to ${RESET}${GREY_LIGHT}$OPENCODE_SESSION${GREY_STD}: cd $WORKTREE_DIR && opencode attach...${RESET}"
+# Send cd + agent command to agent window
+kitten @ --password "$KITTY_PW" send-text --match "env:S_GIT_FEAT_ID=$AGENT_SESSION" --bracketed-paste enable "cd $WORKTREE_DIR"
+kitten @ --password "$KITTY_PW" send-key --match "env:S_GIT_FEAT_ID=$AGENT_SESSION" Return
+
+if [ "$AGENT" = "opencode" ]; then
+    kitten @ --password "$KITTY_PW" send-text --match "env:S_GIT_FEAT_ID=$AGENT_SESSION" --bracketed-paste enable "opencode attach \"http://127.0.0.1:$PORT\" --session \"$SESSION_ID\""
+    kitten @ --password "$KITTY_PW" send-key --match "env:S_GIT_FEAT_ID=$AGENT_SESSION" Return
+    echo "${GREY_STD}   ✓ Sent to ${RESET}${GREY_LIGHT}$AGENT_SESSION${GREY_STD}: cd $WORKTREE_DIR && opencode attach...${RESET}"
+elif [ "$AGENT" = "pi" ]; then
+    kitten @ --password "$KITTY_PW" send-text --match "env:S_GIT_FEAT_ID=$AGENT_SESSION" --bracketed-paste enable "pi \"$PROMPT\""
+    kitten @ --password "$KITTY_PW" send-key --match "env:S_GIT_FEAT_ID=$AGENT_SESSION" Return
+    echo "${GREY_STD}   ✓ Sent to ${RESET}${GREY_LIGHT}$AGENT_SESSION${GREY_STD}: cd $WORKTREE_DIR && pi \"$PROMPT\" (press Enter to submit)${RESET}"
+fi
 
 # Send cd to shell window
 kitten @ --password "$KITTY_PW" send-text --match "env:S_GIT_FEAT_ID=$SHELL_SESSION" --bracketed-paste enable "cd $WORKTREE_DIR"
@@ -229,14 +254,20 @@ echo "${BOLD_BRIGHT_GREEN}🎉 Setup complete!${RESET}"
 echo ""
 echo "${GREY_STD}   Worktree: ${RESET}${GREY_LIGHT}$(fmt_path "$WORKTREE_DIR")${RESET}"
 echo "${GREY_STD}   Repo:     ${RESET}${GREY_LIGHT}$(fmt_path "$REPO_PATH")${GREY_STD} (branch: ${RESET}$BRANCH${GREY_STD})${RESET}"
-echo "${GREY_STD}   Opencode: ${RESET}${GREY_LIGHT}http://127.0.0.1:$PORT${GREY_STD} (PID: ${RESET}$OPENCODE_PID${GREY_STD})${RESET}"
-echo "${GREY_STD}   Session:  ${RESET}${BOLD_BRIGHT_YELLOW}$SESSION_ID${RESET}"
+
+if [ "$AGENT" = "opencode" ]; then
+    echo "${GREY_STD}   Agent:    ${RESET}${GREY_LIGHT}opencode${RESET}${GREY_STD} (server: ${RESET}http://127.0.0.1:$PORT${GREY_STD}, PID: ${RESET}$OPENCODE_PID${GREY_STD})${RESET}"
+    echo "${GREY_STD}   Session:  ${RESET}${BOLD_BRIGHT_YELLOW}$SESSION_ID${RESET}"
+elif [ "$AGENT" = "pi" ]; then
+    echo "${GREY_STD}   Agent:    ${RESET}${GREY_LIGHT}pi${RESET}"
+fi
+
 echo ""
 echo "${GREY_STD}   📝 Prompt: ${RESET}$PROMPT"
 echo ""
 echo "${GREY_STD}   Three kitty windows are now active:${RESET}"
 echo "${GREY_STD}   • ${RESET}${GREY_LIGHT}$NVIM_SESSION${GREY_STD} - nvim${RESET}"
-echo "${GREY_STD}   • ${RESET}${GREY_LIGHT}$OPENCODE_SESSION${GREY_STD} - opencode TUI${RESET}"
+echo "${GREY_STD}   • ${RESET}${GREY_LIGHT}$AGENT_SESSION${GREY_STD} - ${AGENT} TUI${RESET}"
 echo "${GREY_STD}   • ${RESET}${GREY_LIGHT}$SHELL_SESSION${GREY_STD} - shell${RESET}"
 echo "${GREY_DARK}═══════════════════════════════════════════════════════════${RESET}"
 
