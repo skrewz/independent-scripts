@@ -152,14 +152,14 @@ NAME=$(ai_query "Output ONLY a short, lowercase, hyphenated branch name for this
 echo "${GREY_STD}   AI suggested: ${RESET}${BOLD_BRIGHT_YELLOW}$NAME${RESET}"
 
 # --- 5. Validate name format ---
-if ! echo "$NAME" | grep -qE '^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$'; then
+if ! echo "$NAME" | grep -qE '^([a-z]+/)?[a-z0-9][a-z0-9-]*[a-z0-9]$'; then
     echo "${BOLD_BRIGHT_RED}❌ Generated name '$NAME' is not properly formatted (expected: lowercase, hyphenated)${RESET}" >&2
     exit 1
 fi
 
 # --- 6. Create worktree dir ---
 DATE=$(date +%Y-%m-%d_%H_%M_%S)
-WORKTREE_DIR="$WORKTREES_UNDER/${DATE}_${SELECTED_REPO}_${NAME}"
+WORKTREE_DIR="$WORKTREES_UNDER/${DATE}_${SELECTED_REPO}_${NAME//\//_}"
 mkdir -p "$WORKTREE_DIR"
 echo "${GREY_STD}📁 Created worktree: ${RESET}${GREY_LIGHT}$(fmt_path "$WORKTREE_DIR")${RESET}"
 
