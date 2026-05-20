@@ -19,7 +19,6 @@ cleanup() {
         return
     fi
     CLEANUP_DONE=true
-    kitten @ --password "$KITTY_PW" close-window --match "env:S_GIT_FEAT_ID=$NVIM_SESSION" 2>/dev/null || true
     kitten @ --password "$KITTY_PW" close-window --match "env:S_GIT_FEAT_ID=$AGENT_SESSION" 2>/dev/null || true
     kitten @ --password "$KITTY_PW" close-window --match "env:S_GIT_FEAT_ID=$SHELL_SESSION" 2>/dev/null || true
 }
@@ -78,7 +77,6 @@ fmt_path() {
 
 # --- 0. Spawn kitty windows early (before any AI calls) ---
 RANDOM_SUFFIX=$RANDOM
-NVIM_SESSION="s-git-feat-${RANDOM_SUFFIX}-nvim"
 AGENT_SESSION="s-git-feat-${RANDOM_SUFFIX}-agent"
 SHELL_SESSION="s-git-feat-${RANDOM_SUFFIX}-shell"
 
@@ -86,11 +84,9 @@ OPENCODE_SERVER_PASSWORD="$(openssl rand -hex 16)"
 export OPENCODE_SERVER_PASSWORD
 
 echo "${GREY_STD}🖥️  Spawning kitty windows...${RESET}"
-kitten @ --password "$KITTY_PW" launch --type os-window --env "S_GIT_FEAT_ID=$NVIM_SESSION" "$SHELL" &>/dev/null &
 kitten @ --password "$KITTY_PW" launch --type os-window --env "OPENCODE_SERVER_PASSWORD=$OPENCODE_SERVER_PASSWORD" --env "S_GIT_FEAT_ID=$AGENT_SESSION" "$SHELL" &>/dev/null &
 kitten @ --password "$KITTY_PW" launch --type os-window --env "S_GIT_FEAT_ID=$SHELL_SESSION" "$SHELL"  &>/dev/null &
 
-echo "${GREY_STD}   ✓ kitty window: ${RESET}${GREY_LIGHT}$NVIM_SESSION${RESET}"
 echo "${GREY_STD}   ✓ kitty window: ${RESET}${GREY_LIGHT}$AGENT_SESSION${RESET}"
 echo "${GREY_STD}   ✓ kitty window: ${RESET}${GREY_LIGHT}$SHELL_SESSION${RESET}"
 echo ""
@@ -220,13 +216,6 @@ fi
 # --- 12. Remote-control kitty windows ---
 echo "${GREY_STD}🎮 Remote-controlling kitty windows...${RESET}"
 
-# Send cd + nvim to nvim window
-kitten @ --password "$KITTY_PW" send-text --match "env:S_GIT_FEAT_ID=$NVIM_SESSION" --bracketed-paste enable "cd $WORKTREE_DIR"
-kitten @ --password "$KITTY_PW" send-key --match "env:S_GIT_FEAT_ID=$NVIM_SESSION" Return
-kitten @ --password "$KITTY_PW" send-text --match "env:S_GIT_FEAT_ID=$NVIM_SESSION" --bracketed-paste enable "nvim"
-kitten @ --password "$KITTY_PW" send-key --match "env:S_GIT_FEAT_ID=$NVIM_SESSION" Return
-echo "${GREY_STD}   ✓ Sent to ${RESET}${GREY_LIGHT}$NVIM_SESSION${GREY_STD}: cd $WORKTREE_DIR && nvim${RESET}"
-
 # Send cd + agent command to agent window
 kitten @ --password "$KITTY_PW" send-text --match "env:S_GIT_FEAT_ID=$AGENT_SESSION" --bracketed-paste enable "cd $WORKTREE_DIR"
 kitten @ --password "$KITTY_PW" send-key --match "env:S_GIT_FEAT_ID=$AGENT_SESSION" Return
@@ -266,7 +255,6 @@ echo ""
 echo "${GREY_STD}   📝 Prompt: ${RESET}$PROMPT"
 echo ""
 echo "${GREY_STD}   Three kitty windows are now active:${RESET}"
-echo "${GREY_STD}   • ${RESET}${GREY_LIGHT}$NVIM_SESSION${GREY_STD} - nvim${RESET}"
 echo "${GREY_STD}   • ${RESET}${GREY_LIGHT}$AGENT_SESSION${GREY_STD} - ${AGENT} TUI${RESET}"
 echo "${GREY_STD}   • ${RESET}${GREY_LIGHT}$SHELL_SESSION${GREY_STD} - shell${RESET}"
 echo "${GREY_DARK}═══════════════════════════════════════════════════════════${RESET}"
