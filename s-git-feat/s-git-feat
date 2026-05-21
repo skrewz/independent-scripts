@@ -37,7 +37,7 @@ BOLD_BRIGHT_YELLOW=$'\033[1;38;5;226m'
 
 DEBUG=false
 MODE="build"
-AGENT="opencode"
+AGENT="pi"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --debug)
@@ -49,8 +49,8 @@ while [[ $# -gt 0 ]]; do
             MODE="plan"
             shift
             ;;
-        --pi)
-            AGENT="pi"
+        --opencode)
+            AGENT="opencode"
             shift
             ;;
         *)
