@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+# s-git-voiced-feat — Voice-to-feature wrapper for s-git-feat.
+#
+# Records audio via parec (PulseAudio/PipeWire) directly to WAV, transcribes
+# it through a whisper.cpp endpoint, then feeds the transcription into s-git-feat.
+#
+# Usage:
+#   s-git-voiced-feat [--debug] [--plan] [--opencode]
+#
+# Flow:
+#   1. Press Enter to start recording (parec captures from default mic)
+#   2. Speak your idea
+#   3. Press Ctrl+C to stop
+#   4. WAV is sent to whisper, transcription fed to s-git-feat
+#
+# Environment variables:
+#   S_GIT_FEAT_WHISPER_ENDPOINT  — OpenAI-compatible endpoint
+#                                   (default: http://localhost:8080/v1/audio/transcriptions)
+#   S_GIT_FEAT_WHISPER_MODEL     — Model name (default: whisper-large-v3-turbo-q5_0)
+#   S_GIT_FEAT_WHISPER_LANGUAGE  — Language hint for whisper (default: en)
+#   S_GIT_FEAT_PARC_DEVICE       — PulseAudio source device (default: auto)
+#   S_GIT_FEAT_PARC_RATE         — Sample rate in Hz (default: 16000)
+#
+# Forwarded flags (passed through to s-git-feat):
+#   --debug     Enable debug output
+#   --plan      Use plan mode (opencode only)
+#   --opencode  Use opencode agent instead of pi
+
+set -euo pipefail
+
+# --- Locate our own directory ---
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# --- Colours ---
+RESET=$'\033[0m'
+GREY_STD=$'\033[38;5;242m'
+GREY_LIGHT=$'\033[38;5;252m'
+BOLD_BRIGHT_RED=$'\033[1;38;5;196m'
+BOLD_BRIGHT_GREEN=$'\033[1;38;5;46m'
+BOLD_BRIGHT_YELLOW=$'\033[1;38;5;226m'
+BOLD_BRIGHT_CYAN=$'\033[1;38;5;51m'
+
+# --- Config ---
+WHISPER_ENDPOINT="${S_GIT_FEAT_WHISPER_ENDPOINT:-http://localhost:8080/v1/audio/transcriptions}"
+WHISPER_MODEL="${S_GIT_FEAT_WHISPER_MODEL:-whisper-large-v3-turbo-q5_0}"
+WHISPER_LANGUAGE="${S_GIT_FEAT_WHISPER_LANGUAGE:-en}"
+PARC_RATE="${S_GIT_FEAT_PARC_RATE:-16000}"
+PARC_DEVICE="${S_GIT_FEAT_PARC_DEVICE:-}"
+
+# --- Parse flags (forward to s-git-feat) ---
+DEBUG=false
+FORWARDED_FLAGS=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --debug)
+            DEBUG=true
+            FORWARDED_FLAGS+=("--debug")
+            shift
+            ;;
+        --plan)
+            FORWARDED_FLAGS+=("--plan")
+            shift
+            ;;
+        --opencode)
+            FORWARDED_FLAGS+=("--opencode")
+            shift
+            ;;
+        *)
+            echo "${BOLD_BRIGHT_RED}❌ Unknown argument: $1${RESET}" >&2
+            echo "${GREY_STD}   Usage: s-git-voiced-feat [--debug] [--plan] [--opencode]${RESET}" >&2
+            exit 1
+            ;;
+    esac
+done
+
+if $DEBUG; then
+    set -x
+fi
+
+# --- Pre-flight checks ---
+FEAT_SCRIPT="$SCRIPT_DIR/s-git-feat"
+
+if [[ ! -x "$FEAT_SCRIPT" ]]; then
+    echo "${BOLD_BRIGHT_RED}❌ s-git-feat not found or not executable at $FEAT_SCRIPT${RESET}" >&2
+    exit 1
+fi
+
+if ! command -v parec &>/dev/null; then
+    echo "${BOLD_BRIGHT_RED}❌ parec not found (install pulseaudio-utils)${RESET}" >&2
+    exit 1
+fi
+
+# --- Temp file + cleanup ---
+TEMP_FILES=()
+cleanup() {
+    for f in "${TEMP_FILES[@]+"${TEMP_FILES[@]}"}"; do
+        rm -f "$f" 2>/dev/null || true
+    done
+}
+trap cleanup EXIT
+
+WAV_FILE=$(mktemp /tmp/s-git-voiced-XXXXXX.wav)
+TEMP_FILES+=("$WAV_FILE")
+
+# --- 1. Record audio ---
+echo "${GREY_STD}🎙️  Voice recorder${RESET}"
+echo "${GREY_STD}   Format: s16le ${PARC_RATE}Hz mono → WAV${RESET}"
+if [[ -n "$PARC_DEVICE" ]]; then
+    echo "${GREY_STD}   Device: ${RESET}${GREY_LIGHT}$PARC_DEVICE${RESET}"
+fi
+echo ""
+read -rp "${GREY_STD}   Press Enter to start recording (Ctrl+C to stop)…${RESET} "
+
+# parec uses long options; --file-format=wav writes a proper WAV container
+PARC_ARGS=(
+    --format=s16le --rate="$PARC_RATE" --channels=1
+    --file-format=wav
+    "$WAV_FILE"
+)
+if [[ -n "$PARC_DEVICE" ]]; then
+    PARC_ARGS=(--device="$PARC_DEVICE" "${PARC_ARGS[@]}")
+fi
+
+echo ""
+echo "${GREY_LIGHT}   ● Recording…${RESET}"
+
+# Run parec in background.  Ctrl+C sends SIGINT to the whole process
+# group — both bash and parec.  A no-op INT trap stops bash from
+# exiting, and a wait-loop (not a bare wait) avoids bash's special
+# "exit after trap on interrupted wait" behaviour.
+parec "${PARC_ARGS[@]}" &
+PARC_PID=$!
+trap : INT
+while wait "$PARC_PID" 2>/dev/null; do true; done
+trap - INT
+
+echo "${GREY_STD}   ○ Stopped.${RESET}"
+
+# Check we got something (WAV header is 44 bytes minimum)
+WAV_SIZE=$(stat -c%s "$WAV_FILE" 2>/dev/null || echo 0)
+if [[ "$WAV_SIZE" -lt 44 ]]; then
+    echo "${BOLD_BRIGHT_RED}❌ Recording too short or cancelled${RESET}" >&2
+    exit 1
+fi
+
+echo "${GREY_STD}   ✓ Captured ${RESET}${GREY_LIGHT}${WAV_SIZE} bytes${RESET}"
+echo ""
+
+# --- 3. Transcribe via whisper.cpp ---
+echo "${GREY_STD}🔊 Transcribing via whisper.cpp…${RESET}"
+echo "${GREY_STD}   Endpoint: ${RESET}${GREY_LIGHT}$WHISPER_ENDPOINT${RESET}"
+echo "${GREY_STD}   Model:    ${RESET}${GREY_LIGHT}$WHISPER_MODEL${RESET}"
+
+CURL_ARGS=(
+    -sS -X POST "$WHISPER_ENDPOINT"
+    -F "file=@$WAV_FILE"
+    -F "model=$WHISPER_MODEL"
+    -F "language=$WHISPER_LANGUAGE"
+    -F "response_format=json"
+)
+
+RESPONSE=$(curl "${CURL_ARGS[@]}")
+
+if $DEBUG; then
+    echo "📡 Whisper response: $RESPONSE" >&2
+fi
+
+TRANSCRIPTION=$(echo "$RESPONSE" | jq -r '.text // empty' 2>/dev/null) || {
+    echo "${BOLD_BRIGHT_RED}❌ Failed to parse whisper response${RESET}" >&2
+    echo "${GREY_STD}   Raw response: ${RESET}$RESPONSE" >&2
+    exit 1
+}
+
+if [[ -z "$TRANSCRIPTION" ]]; then
+    echo "${BOLD_BRIGHT_RED}❌ Transcription is empty${RESET}" >&2
+    echo "${GREY_STD}   Raw response: ${RESET}$RESPONSE" >&2
+    exit 1
+fi
+
+# Trim whitespace
+TRANSCRIPTION=$(echo "$TRANSCRIPTION" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+echo "${BOLD_BRIGHT_GREEN}✅ Transcription:${RESET}"
+echo "${GREY_LIGHT}   $TRANSCRIPTION${RESET}"
+echo ""
+
+# --- 4. Invoke s-git-feat ---
+echo "${BOLD_BRIGHT_CYAN}🚀 Handing off to s-git-feat…${RESET}"
+echo ""
+
+exec "$FEAT_SCRIPT" "${FORWARDED_FLAGS[@]+"${FORWARDED_FLAGS[@]}"}" "$TRANSCRIPTION"
