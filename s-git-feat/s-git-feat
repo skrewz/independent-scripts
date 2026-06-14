@@ -98,7 +98,7 @@ ai_query() {
     response=$(curl -sS -X POST "$LLM_ENDPOINT" \
         -H "Content-Type: application/json" \
         --data "$(jq -nc --arg model "$MODEL" --arg msg "$user_msg" \
-            '{model: $model, messages: [{role: "user", content: $msg}], max_tokens: 1000}')")
+            '{model: $model, messages: [{role: "user", content: $msg}], max_tokens: 20000}')")
     
     if $DEBUG; then
         echo "📡 AI request: $user_msg" >&2
@@ -129,7 +129,7 @@ echo "${GREY_STD}📂 Found $(echo "$REPOS" | tr ',' '\n' | wc -l) repos in ${GR
 
 # --- 3. Select repo (AI) ---
 echo "${GREY_STD}🤖 Asking AI which repo to use...${RESET}"
-SELECTED_REPO=$(ai_query "Output ONLY the repo name (no prefixes, no reasoning) from this list: $REPOS. Which repo is the user referring to in this prompt? \"$PROMPT\". If the user is specifying a repo, use that. If you're in doubt, do not output anything.")
+SELECTED_REPO=$(ai_query "Output ONLY the repo name (no prefixes, no reasoning) from this list: $REPOS. Which repo is the user referring to in this prompt? \"$PROMPT\". If the user is specifying a repo, use that. If you're in doubt, do not output anything. Your answer will be used in a system that breaks if you output **anything** except the repo name.")
 
 [ -n "$SELECTED_REPO" ]
 
@@ -144,11 +144,11 @@ echo "${BOLD_BRIGHT_GREEN}✅ Repo confirmed: ${RESET}$(fmt_path "$REPO_PATH")"
 
 # --- 4. Generate worktree name (AI) ---
 echo "${GREY_STD}🤖 Asking AI to generate worktree name...${RESET}"
-NAME=$(ai_query "Output ONLY a short, lowercase, hyphenated branch name for this feature: \"$PROMPT\". Ensure it's a valid branch name. No newlines, not starting in a dash, etc etc.")
+NAME=$(ai_query "Output ONLY a short, lowercase, hyphenated branch name for this feature: \"$PROMPT\". Ensure it's a valid branch name. No newlines, not starting in a dash, etc etc. Your answer will be used in a system that breaks if you output **anything** except the repo name.")
 echo "${GREY_STD}   AI suggested: ${RESET}${BOLD_BRIGHT_YELLOW}$NAME${RESET}"
 
 # --- 5. Validate name format ---
-if ! echo "$NAME" | grep -qE '^([a-z]+/)?[a-z0-9][a-z0-9-]*[a-z0-9]$'; then
+if ! echo "$NAME" | grep -qE '^([a-z]+/)?[a-z0-9.][a-z0-9.-]*[a-z0-9.]$'; then
     echo "${BOLD_BRIGHT_RED}❌ Generated name '$NAME' is not properly formatted (expected: lowercase, hyphenated)${RESET}" >&2
     exit 1
 fi
