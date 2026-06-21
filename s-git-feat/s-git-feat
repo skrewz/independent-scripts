@@ -91,21 +91,41 @@ echo "${GREY_STD}   ✓ kitty window: ${RESET}${GREY_LIGHT}$AGENT_SESSION${RESET
 echo "${GREY_STD}   ✓ kitty window: ${RESET}${GREY_LIGHT}$SHELL_SESSION${RESET}"
 echo ""
 
-# --- Helper: call AI endpoint ---
+# --- Helper: call AI endpoint (with exponential backoff) ---
 ai_query() {
     local user_msg="$1"
-    local response
-    response=$(curl -sS -X POST "$LLM_ENDPOINT" \
-        -H "Content-Type: application/json" \
-        --data "$(jq -nc --arg model "$MODEL" --arg msg "$user_msg" \
-            '{model: $model, messages: [{role: "user", content: $msg}], max_tokens: 20000}')")
-    
-    if $DEBUG; then
-        echo "📡 AI request: $user_msg" >&2
-        echo "📥 AI response (raw): $response" >&2
-    fi
-    
-    echo "$response" | jq -r '.choices[0].message.content'
+    local max_retries=5
+    local delay=2
+    local attempt=0
+
+    while [ $attempt -lt $max_retries ]; do
+        attempt=$((attempt + 1))
+        local response
+        response=$(curl -sS -X POST "$LLM_ENDPOINT" \
+            -H "Content-Type: application/json" \
+            --data "$(jq -nc --arg model "$MODEL" --arg msg "$user_msg" \
+                '{model: $model, messages: [{role: "user", content: $msg}], max_tokens: 20000}')")
+
+        if $DEBUG; then
+            echo "📡 AI request (attempt $attempt): $user_msg" >&2
+            echo "📥 AI response (raw): $response" >&2
+        fi
+
+        # Check for "Too many requests" error
+        if echo "$response" | grep -q '"Too many requests"'; then
+            if [ $attempt -lt $max_retries ]; then
+                echo "${GREY_STD}⏳ Rate limited — retrying in ${delay}s (attempt $((attempt + 1))/$max_retries)...${RESET}" >&2
+                sleep "$delay"
+                delay=$((delay * 2))
+            else
+                echo "${BOLD_BRIGHT_RED}❌ AI endpoint rate-limited after $max_retries attempts${RESET}" >&2
+                exit 1
+            fi
+        else
+            echo "$response" | jq -r '.choices[0].message.content'
+            return 0
+        fi
+    done
 }
 
 # --- 1. Parse prompt ---
