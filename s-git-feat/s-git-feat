@@ -123,6 +123,15 @@ echo "${GREY_STD}🚀 s-git-feat starting...${RESET}"
 echo "${GREY_STD}   Prompt: ${RESET}$PROMPT"
 echo ""
 
+# --- 1.5. Check if PWD is already a git repo ---
+CURRENT_GIT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || true)
+if [ -n "$CURRENT_GIT_ROOT" ]; then
+    SELECTED_REPO=$(basename "$CURRENT_GIT_ROOT")
+    REPO_PATH="$CURRENT_GIT_ROOT"
+    echo "${GREY_STD}📂 Current directory is a git repo: ${RESET}${BOLD_BRIGHT_YELLOW}$SELECTED_REPO${RESET}"
+    echo "${BOLD_BRIGHT_GREEN}✅ Using current repo: ${RESET}$(fmt_path "$REPO_PATH")"
+else
+
 # --- 2. List all repos ---
 REPOS=$(find "$REPOS_UNDER" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort -u | tr '\n' ',')
 echo "${GREY_STD}📂 Found $(echo "$REPOS" | tr ',' '\n' | wc -l) repos in ${GREY_LIGHT}$(fmt_path "$REPOS_UNDER")${RESET}"
@@ -141,25 +150,26 @@ if [ ! -d "$REPO_PATH" ]; then
     exit 1
 fi
 echo "${BOLD_BRIGHT_GREEN}✅ Repo confirmed: ${RESET}$(fmt_path "$REPO_PATH")"
+fi
 
-# --- 4. Generate worktree name (AI) ---
+# --- 3. Generate worktree name (AI) ---
 echo "${GREY_STD}🤖 Asking AI to generate worktree name...${RESET}"
 NAME=$(ai_query "Output ONLY a short, lowercase, hyphenated branch name for this feature: \"$PROMPT\". Ensure it's a valid branch name. No newlines, not starting in a dash, etc etc. Your answer will be used in a system that breaks if you output **anything** except the repo name.")
 echo "${GREY_STD}   AI suggested: ${RESET}${BOLD_BRIGHT_YELLOW}$NAME${RESET}"
 
-# --- 5. Validate name format ---
+# --- 4. Validate name format ---
 if ! echo "$NAME" | grep -qE '^([a-z]+/)?[a-z0-9.][a-z0-9.-]*[a-z0-9.]$'; then
     echo "${BOLD_BRIGHT_RED}❌ Generated name '$NAME' is not properly formatted (expected: lowercase, hyphenated)${RESET}" >&2
     exit 1
 fi
 
-# --- 6. Create worktree dir ---
+# --- 5. Create worktree dir ---
 DATE=$(date +%Y-%m-%d_%H_%M_%S)
 WORKTREE_DIR="$WORKTREES_UNDER/${DATE}_${SELECTED_REPO}_${NAME//\//_}"
 mkdir -p "$WORKTREE_DIR"
 echo "${GREY_STD}📁 Created worktree: ${RESET}${GREY_LIGHT}$(fmt_path "$WORKTREE_DIR")${RESET}"
 
-# --- 7. Detect branch ---
+# --- 6. Detect branch ---
 cd "$REPO_PATH"
 BRANCH=$(git branch --show-current 2>/dev/null || echo "main")
 if [ "$BRANCH" != "main" ] && [ "$BRANCH" != "master" ]; then
@@ -168,20 +178,20 @@ if [ "$BRANCH" != "main" ] && [ "$BRANCH" != "master" ]; then
 fi
 echo "${GREY_STD}🌿 Detected branch: ${RESET}$BRANCH"
 
-# --- 8. Create git worktree ---
+# --- 7. Create git worktree ---
 echo "${GREY_STD}📦 Creating git worktree...${RESET}"
 git worktree add -b "$NAME" "$WORKTREE_DIR" "$BRANCH" >/dev/null 2>&1
 echo "${BOLD_BRIGHT_GREEN}✅ Worktree created: ${RESET}${GREY_LIGHT}$(fmt_path "$WORKTREE_DIR")${RESET}"
 
-# --- 9. Start agent (opencode or pi) ---
+# --- 8. Start agent (opencode or pi) ---
 cd "$WORKTREE_DIR"
 
 if [ "$AGENT" = "opencode" ]; then
-    # --- 9a. Generate random port ---
+    # --- 8a. Generate random port ---
     PORT=$((RANDOM % 10000 + 30000))
     echo "${GREY_STD}🔌 Generated random port: ${RESET}$PORT"
 
-    # --- 9b. Start opencode server ---
+    # --- 8b. Start opencode server ---
     echo "${GREY_STD}🚀 Starting opencode server...${RESET}"
     opencode serve --port "$PORT" --hostname 127.0.0.1 &>/dev/null &
     OPENCODE_PID=$!
@@ -189,7 +199,7 @@ if [ "$AGENT" = "opencode" ]; then
     sleep 5
     echo "${BOLD_BRIGHT_GREEN}✅ Opencode server ready: ${RESET}${GREY_LIGHT}http://127.0.0.1:$PORT${RESET}"
 
-    # --- 9c. Create session and send prompt ---
+    # --- 8c. Create session and send prompt ---
     echo "${GREY_STD}💬 Creating session and sending prompt...${RESET}"
     SESSION_ID=$(curl -u "opencode:$OPENCODE_SERVER_PASSWORD" -sS -X POST "http://127.0.0.1:$PORT/session" \
       -H "Content-Type: application/json" \
@@ -213,7 +223,7 @@ elif [ "$AGENT" = "pi" ]; then
     echo "${GREY_STD}   (prompt will be injected into the TUI window)${RESET}"
 fi
 
-# --- 12. Remote-control kitty windows ---
+# --- 11. Remote-control kitty windows ---
 echo "${GREY_STD}🎮 Remote-controlling kitty windows...${RESET}"
 
 # Send cd + agent command to agent window
