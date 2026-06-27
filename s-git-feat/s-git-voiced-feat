@@ -185,8 +185,15 @@ echo "${BOLD_BRIGHT_GREEN}✅ Transcription:${RESET}"
 echo "${GREY_LIGHT}   $TRANSCRIPTION${RESET}"
 echo ""
 
+# --- 3.5. Wrap transcription for the model ---
+# Voice-to-text produces misheard words, homophones, typos etc.
+# Prepend a note so the model knows to focus on intent over literal wording.
+WRAPPED_PROMPT="⚠️ This is a voice-to-text transcription. Expect misheard words, homophones, typos, and speech-to-text artifacts. Focus on the user's intent rather than literal wording.
+
+$TRANSCRIPTION"
+
 # --- 4. Invoke s-git-feat ---
 echo "${BOLD_BRIGHT_CYAN}🚀 Handing off to s-git-feat…${RESET}"
 echo ""
 
-exec "$FEAT_SCRIPT" "${FORWARDED_FLAGS[@]+"${FORWARDED_FLAGS[@]}"}" "$TRANSCRIPTION"
+exec "$FEAT_SCRIPT" "${FORWARDED_FLAGS[@]+"${FORWARDED_FLAGS[@]}"}" "$WRAPPED_PROMPT"
