@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# s-git-ai — Shared AI query helper for s-git-* scripts.
+#
+# Source this file, then call: ai_query "your message"
+#
+# Environment variables (set by caller before sourcing):
+#   S_GIT_MODEL          — LLM model name
+#   S_GIT_ENDPOINT       — LLM endpoint URL
+#   S_GIT_MAX_TOKENS     — Max tokens for response (default: 2000)
+#   S_GIT_MAX_RETRIES    — Max retry attempts on rate limit (default: 5)
+#   S_GIT_RETRY_DELAY    — Initial delay in seconds (default: 2)
+#
+# Environment variables (global defaults, used if caller doesn't override):
+#   S_GIT_MODEL          — LLM model name (default: qw3.5-2b-nonthinking-Q5_K_S-default-ctx256k)
+#   S_GIT_ENDPOINT       — LLM endpoint URL (default: http://localhost:8080/v1/chat/completions)
+#
+# Usage example in caller:
+#   # Set script-specific overrides (optional)
+#   S_GIT_MODEL="${S_GIT_MYSPECIFIC_MODEL:-$S_GIT_MODEL}"
+#   S_GIT_ENDPOINT="${S_GIT_MYSPECIFIC_ENDPOINT:-$S_GIT_ENDPOINT}"
+#   S_GIT_MAX_TOKENS=2000
+#   source ../s-git-common/s-git-ai
+#
+#   # Then use:
+#   result=$(ai_query "your prompt here")
+
+# --- Minimal colours (for shared output only) ---
+GREY_STD="${GREY_STD:-$'\033[38;5;242m'}"
+BOLD_BRIGHT_RED="${BOLD_BRIGHT_RED:-$'\033[1;38;5;196m'}"
+RESET="${RESET:-$'\033[0m'}"
+
+# --- Config (global defaults) ---
+: "${S_GIT_MODEL:=qw3.5-2b-nonthinking-Q5_K_S-default-ctx256k}"
+: "${S_GIT_ENDPOINT:=http://localhost:8080/v1/chat/completions}"
+: "${S_GIT_MAX_TOKENS:=2000}"
+: "${S_GIT_MAX_RETRIES:=5}"
+: "${S_GIT_RETRY_DELAY:=2}"
+
+# --- Helper: call AI endpoint with exponential backoff ---
+ai_query() {
+    local user_msg="$1"
+    local max_retries="$S_GIT_MAX_RETRIES"
+    local delay="$S_GIT_RETRY_DELAY"
+    local attempt=0
+
+    while [ "$attempt" -lt "$max_retries" ]; do
+        attempt=$((attempt + 1))
+        local response
+        response=$(curl -sS -X POST "$S_GIT_ENDPOINT" \
+            -H "Content-Type: application/json" \
+            --data "$(jq -nc --arg model "$S_GIT_MODEL" --arg msg "$user_msg" \
+                "{model: \$model, messages: [{role: \"user\", content: \$msg}], max_tokens: $S_GIT_MAX_TOKENS}")")
+
+        if $DEBUG; then
+            echo "📡 AI request (attempt $attempt): $user_msg" >&2
+            echo "📥 AI response (raw): $response" >&2
+        fi
+
+        # Check for "Too many requests" error
+        if echo "$response" | grep -q '"Too many requests"'; then
+            if [ "$attempt" -lt "$max_retries" ]; then
+                echo "${GREY_STD}⏳ Rate limited — retrying in ${delay}s (attempt $((attempt + 1))/$max_retries)...${RESET}" >&2
+                sleep "$delay"
+                delay=$((delay * 2))
+            else
+                echo "${BOLD_BRIGHT_RED}❌ AI endpoint rate-limited after $max_retries attempts${RESET}" >&2
+                return 1
+            fi
+        else
+            echo "$response" | jq -r '.choices[0].message.content'
+            return 0
+        fi
+    done
+}

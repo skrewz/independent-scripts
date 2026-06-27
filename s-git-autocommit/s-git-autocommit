@@ -1,0 +1,185 @@
+#!/usr/bin/env bash
+# s-git-autocommit — Generate an AI commit message for staged changes and commit.
+#
+# With -A, stages all changes first (like git add -A).
+# With -p, also pushes to the remote.
+#
+# Usage:
+#   s-git-autocommit              # AI commit message, commit staged changes
+#   s-git-autocommit -A           # Stage all, AI commit message, commit
+#   s-git-autocommit -A -p        # Stage all, AI commit message, commit, push
+#   s-git-autocommit --dry-run    # AI commit message, show only
+#
+# Environment variables:
+#   S_GIT_MODEL          — LLM model name (global default for all s-git-* scripts)
+#   S_GIT_ENDPOINT       — LLM endpoint URL (global default for all s-git-* scripts)
+#   S_GIT_AUTOCOMMIT_MODEL  — LLM model name (override for this script only)
+#   S_GIT_AUTOCOMMIT_ENDPOINT — LLM endpoint URL (override for this script only)
+
+set -euo pipefail
+
+# --- Colors (256-color palette) ---
+RESET=$'\033[0m'
+GREY_STD=$'\033[38;5;242m'
+GREY_LIGHT=$'\033[38;5;252m'
+BOLD_BRIGHT_RED=$'\033[1;38;5;196m'
+BOLD_BRIGHT_GREEN=$'\033[1;38;5;46m'
+BOLD_BRIGHT_YELLOW=$'\033[1;38;5;226m'
+BOLD_CYAN=$'\033[1;38;5;51m'
+
+# --- Config ---
+DEBUG=false
+PUSH=false
+DRY_RUN=false
+STAGE_ALL=false
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --debug)
+            DEBUG=true
+            set -x
+            shift
+            ;;
+        -A)
+            STAGE_ALL=true
+            shift
+            ;;
+        -p|--push)
+            PUSH=true
+            shift
+            ;;
+        --dry-run)
+            DRY_RUN=true
+            shift
+            ;;
+        -h|--help)
+            echo "Usage: s-git-autocommit [OPTIONS]"
+            echo ""
+            echo "Generate an AI commit message for staged changes and commit."
+            echo ""
+            echo "Options:"
+            echo "  -A              Stage all changes first (like git add -A)"
+            echo "  -p, --push      Push to remote after committing"
+            echo "      --dry-run   Show the commit message without committing"
+            echo "      --debug     Verbose output"
+            echo "  -h, --help      Show this help message"
+            echo ""
+            echo "Environment:"
+            echo "  S_GIT_MODEL          Global LLM model name"
+            echo "  S_GIT_ENDPOINT       Global LLM endpoint URL"
+            echo "  S_GIT_AUTOCOMMIT_MODEL Script-specific model override"
+            echo "  S_GIT_AUTOCOMMIT_ENDPOINT Script-specific endpoint override"
+            exit 0
+            ;;
+        *)
+            echo "${BOLD_BRIGHT_RED}❌ Unknown option: $1${RESET}" >&2
+            exit 1
+            ;;
+    esac
+done
+
+# --- 0. Verify we are in a git repo ---
+if ! git rev-parse --is-inside-work-tree &>/dev/null; then
+    echo "${BOLD_BRIGHT_RED}❌ Not inside a git repository${RESET}" >&2
+    exit 1
+fi
+
+# --- 1. Stage all changes if requested ---
+if $STAGE_ALL; then
+    echo "${GREY_STD}📦 Staging all changes...${RESET}"
+    git add -A
+    echo "${BOLD_BRIGHT_GREEN}✅ Changes staged${RESET}"
+fi
+
+# --- 2. Check for staged changes ---
+if git diff --cached --quiet; then
+    echo "${BOLD_BRIGHT_RED}❌ No staged changes to commit${RESET}" >&2
+    exit 1
+fi
+
+# --- 3. Capture staged diff ---
+DIFF=$(git diff --cached)
+
+# --- AI config (shared helper) ---
+S_GIT_MODEL="${S_GIT_AUTOCOMMIT_MODEL:-$S_GIT_MODEL}"
+S_GIT_ENDPOINT="${S_GIT_AUTOCOMMIT_ENDPOINT:-$S_GIT_ENDPOINT}"
+S_GIT_MAX_TOKENS=2000
+source "$(dirname "$0")/../s-git-common/s-git-ai"
+
+# --- 4. Generate commit message via AI ---
+echo "${GREY_STD}🤖 Generating commit message...${RESET}"
+
+# Truncate diff if too long (keep most recent/meaningful parts)
+DIFF_TRUNCATED="$DIFF"
+DIFF_LINES=$(echo "$DIFF" | wc -l)
+if [ "$DIFF_LINES" -gt 800 ]; then
+    # Keep header lines (file renames etc) and the last 700 lines of diff
+    DIFF_TRUNCATED=$(echo "$DIFF" | head -50; echo "... [truncated, $((DIFF_LINES - 100)) lines omitted] ..."; echo "$DIFF" | tail -700)
+    echo "${GREY_STD}   (diff truncated from $DIFF_LINES to ~750 lines)${RESET}"
+fi
+
+PROMPT="You are generating a git commit message. Follow these rules strictly:
+
+1. Use gitmoji conventions (e.g. ✨, 🐛, 📝, 🔧, ♻️, 🚨, 📦, etc.)
+2. Use conventional commits format: <gitmoji> <type>: <subject>
+3. Types: feat, fix, docs, style, refactor, test, chore, perf, ci, build, revert
+4. Subject line max 72 characters, imperative mood, no trailing period
+5. If changes are complex, add a git commit description
+6. Output ONLY the commit message, nothing else — no markdown code fences, no explanation
+7. Wrap text at 80 columns
+
+Here is the staged diff:
+
+---DIFF START---
+${DIFF_TRUNCATED}
+---DIFF END---"
+
+COMMIT_MSG=$(ai_query "$PROMPT")
+
+# Clean up: strip any markdown code fences the model might add
+COMMIT_MSG=$(echo "$COMMIT_MSG" | sed '/^```/,/^```/d' | sed '/^```[a-z]*$/d' | xargs)
+
+if [ -z "$COMMIT_MSG" ]; then
+    echo "${BOLD_BRIGHT_RED}❌ AI returned an empty commit message${RESET}" >&2
+    exit 1
+fi
+
+echo ""
+echo "${GREY_STD}📝 Generated commit message:${RESET}"
+echo "${BOLD_CYAN}┌─────────────────────────────────────────────────────────────${RESET}"
+while IFS= read -r line; do
+    echo "${BOLD_CYAN}│${RESET} $line"
+done <<< "$COMMIT_MSG"
+echo "${BOLD_CYAN}└─────────────────────────────────────────────────────────────${RESET}"
+echo ""
+
+# --- 5. Dry run: show only ---
+if $DRY_RUN; then
+    echo "${GREY_STD}🔍 Dry run — no commit made${RESET}"
+    exit 0
+fi
+
+# --- 6. Commit ---
+echo "${GREY_STD}💾 Committing...${RESET}"
+git commit -m "$COMMIT_MSG"
+echo "${BOLD_BRIGHT_GREEN}✅ Committed${RESET}"
+
+# --- 7. Push if requested ---
+if $PUSH; then
+    echo "${GREY_STD}📤 Pushing to remote...${RESET}"
+    
+    # Detect remote and branch
+    REMOTE=$(git remote -v | head -1 | awk '{print $1}')
+    BRANCH=$(git branch --show-current)
+    
+    if [ -z "$REMOTE" ] || [ -z "$BRANCH" ]; then
+        echo "${BOLD_BRIGHT_RED}❌ Could not determine remote or branch${RESET}" >&2
+        exit 1
+    fi
+    
+    git push "$REMOTE" "$BRANCH"
+    echo "${BOLD_BRIGHT_GREEN}✅ Pushed to ${RESET}${BOLD_BRIGHT_YELLOW}$REMOTE/$BRANCH${RESET}"
+fi
+
+echo ""
+echo "${BOLD_BRIGHT_GREEN}🎉 Done!${RESET}"
