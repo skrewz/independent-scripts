@@ -223,7 +223,7 @@ if [ "$AGENT" = "opencode" ]; then
     kitten @ --password "$KITTY_PW" send-key --match "env:S_GIT_FEAT_ID=$AGENT_SESSION" Return
     echo "${GREY_STD}   ✓ Sent to ${RESET}${GREY_LIGHT}$AGENT_SESSION${GREY_STD}: cd $WORKTREE_DIR && opencode attach...${RESET}"
 elif [ "$AGENT" = "pi" ]; then
-    kitten @ --password "$KITTY_PW" send-text --match "env:S_GIT_FEAT_ID=$AGENT_SESSION" --bracketed-paste enable "pi \"$PROMPT\""
+    kitten @ --password "$KITTY_PW" send-text --match "env:S_GIT_FEAT_ID=$AGENT_SESSION" --bracketed-paste enable "pi --approve \"$PROMPT\""
     kitten @ --password "$KITTY_PW" send-key --match "env:S_GIT_FEAT_ID=$AGENT_SESSION" Return
     echo "${GREY_STD}   ✓ Sent to ${RESET}${GREY_LIGHT}$AGENT_SESSION${GREY_STD}: cd $WORKTREE_DIR && pi \"$PROMPT\" (press Enter to submit)${RESET}"
 fi
