@@ -142,7 +142,7 @@ fi
 
 # --- 3. Generate worktree name (AI) ---
 echo "${GREY_STD}🤖 Asking AI to generate worktree name...${RESET}"
-NAME=$(ai_query "Output ONLY a short, lowercase, hyphenated branch name for this feature: \"$PROMPT\". Ensure it's a valid branch name. No newlines, not starting in a dash, etc etc. Your answer will be used in a system that breaks if you output **anything** except the repo name.")
+NAME=$(ai_query "Output ONLY a short, lowercase, hyphenated branch name for this feature: \"$PROMPT\". Ensure it's a valid branch name. No newlines, not starting in a dash, etc etc. Your answer will be used in a system that breaks if you output **anything** except the branch name.")
 echo "${GREY_STD}   AI suggested: ${RESET}${BOLD_BRIGHT_YELLOW}$NAME${RESET}"
 
 # --- 4. Validate name format ---
