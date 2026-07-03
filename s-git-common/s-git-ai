@@ -33,7 +33,7 @@ RESET="${RESET:-$'\033[0m'}"
 : "${S_GIT_MODEL:=qw3.5-2b-nonthinking-Q5_K_S-default-ctx256k}"
 : "${S_GIT_ENDPOINT:=http://localhost:8080/v1/chat/completions}"
 : "${S_GIT_MAX_TOKENS:=2000}"
-: "${S_GIT_MAX_RETRIES:=5}"
+: "${S_GIT_MAX_RETRIES:=20}"
 : "${S_GIT_RETRY_DELAY:=2}"
 
 # --- Helper: call AI endpoint with exponential backoff ---
