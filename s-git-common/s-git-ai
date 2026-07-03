@@ -4,11 +4,12 @@
 # Source this file, then call: ai_query "your message"
 #
 # Environment variables (set by caller before sourcing):
-#   S_GIT_MODEL          — LLM model name
-#   S_GIT_ENDPOINT       — LLM endpoint URL
-#   S_GIT_MAX_TOKENS     — Max tokens for response (default: 2000)
-#   S_GIT_MAX_RETRIES    — Max retry attempts on rate limit (default: 5)
-#   S_GIT_RETRY_DELAY    — Initial delay in seconds (default: 2)
+#   S_GIT_MODEL                   — LLM model name
+#   S_GIT_ENDPOINT                — LLM endpoint URL
+#   S_GIT_MAX_TOKENS              — Max tokens for response (default: 2000)
+#   S_GIT_MAX_RETRIES             — Max retry attempts on rate limit (default: 5)
+#   S_GIT_RETRY_DELAY             — Initial delay in seconds (default: 2)
+#   S_GIT_RETRY_EXPONENT_FRACTION — How quickly we grow the delay, expressed as integer math fraction (default 5/4)
 #
 # Environment variables (global defaults, used if caller doesn't override):
 #   S_GIT_MODEL          — LLM model name (default: qw3.5-2b-nonthinking-Q5_K_S-default-ctx256k)
@@ -34,13 +35,16 @@ RESET="${RESET:-$'\033[0m'}"
 : "${S_GIT_ENDPOINT:=http://localhost:8080/v1/chat/completions}"
 : "${S_GIT_MAX_TOKENS:=2000}"
 : "${S_GIT_MAX_RETRIES:=20}"
-: "${S_GIT_RETRY_DELAY:=2}"
+: "${S_GIT_RETRY_DELAY:=5}"
+: "${S_GIT_RETRY_EXPONENT_FRACTION:=4/3}"
 
 # --- Helper: call AI endpoint with exponential backoff ---
 ai_query() {
     local user_msg="$1"
     local max_retries="$S_GIT_MAX_RETRIES"
     local delay="$S_GIT_RETRY_DELAY"
+    local num="${S_GIT_RETRY_EXPONENT_FRACTION%/*}"
+    local denum="${S_GIT_RETRY_EXPONENT_FRACTION#*/}"
     local attempt=0
 
     while [ "$attempt" -lt "$max_retries" ]; do
@@ -61,7 +65,7 @@ ai_query() {
             if [ "$attempt" -lt "$max_retries" ]; then
                 echo "${GREY_STD}⏳ Rate limited — retrying in ${delay}s (attempt $((attempt + 1))/$max_retries)...${RESET}" >&2
                 sleep "$delay"
-                delay=$((delay * 2))
+                delay=$((delay * num / denum))
             else
                 echo "${BOLD_BRIGHT_RED}❌ AI endpoint rate-limited after $max_retries attempts${RESET}" >&2
                 return 1
